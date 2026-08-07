@@ -264,7 +264,9 @@ def scrape_generic(search: dict[str, Any], source_id: str, cfg: dict[str, Any]) 
                 if page_number == 1:
                     raise
                 break
-            page_links = page.locator(selector).evaluate_all("els => [...new Set(els.map(e => e.href))]")
+            page_links = page.locator(selector).evaluate_all(
+                "els => [...new Set(els.map(e => e.href).filter(h => /^https?:\\/\\//.test(h)))]"
+            )
             before = len(links)
             links.extend(x for x in page_links if x not in links)
             if len(links) == before:

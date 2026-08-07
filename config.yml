@@ -30,7 +30,7 @@ searches:
     source_urls:
       realitymix: "https://realitymix.cz/reality/byty/prodej/olomoucky/sumperk"
       bezrealitky: "https://www.bezrealitky.cz/vypis/nabidka-prodej/byt/olomoucky-kraj"
-      reality_idnes: "https://reality.idnes.cz/s/prodej/byty/olomoucky-kraj/okres-sumperk/"
+      reality_idnes: "https://reality.idnes.cz/s/prodej/byty/olomoucky-kraj/"
       remax: "https://www.remax-czech.cz/reality/vyhledavani/?query=Z%C3%A1b%C5%99eh&offer=prodej&type=byt"
       maxi_reality: "https://www.maxirealitypraha.cz/prodej/byty/"
       bazos: "https://reality.bazos.cz/prodam/byt/?hlokalita=78901&humkreis=5&cenado=4000000"
@@ -40,7 +40,7 @@ sources:
   bezrealitky: {name: "Bezrealitky", link_fragment: "/nemovitosti-byty-domy/", page_param: "page"}
   reality_idnes: {name: "Reality.iDNES", link_fragment: "/detail/", page_param: "page"}
   remax: {name: "RE/MAX Czech", link_fragment: "/reality/detail/", page_param: "page"}
-  maxi_reality: {name: "Maxi Reality Praha", link_fragment: "/prodej/byty/", page_param: "page"}
+  maxi_reality: {name: "Maxi Reality Praha", link_fragment: "/prodej/byty/byty-", page_param: "strana"}
   bazos: {name: "Bazoš", link_fragment: "/inzerat/", page_param: "strana", page_mode: "offset_path"}
 
 filters:
