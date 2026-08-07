@@ -1,0 +1,38 @@
+name: Daily flat search
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: daily-flat-search
+  cancel-in-progress: false
+
+jobs:
+  search:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Search and notify
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python flat_finder.py
+      - name: Persist sent listing IDs
+        run: |
+          if git diff --quiet -- state.json; then exit 0; fi
+          git config user.name "flat-finder-bot"
+          git config user.email "flat-finder-bot@users.noreply.github.com"
+          git add state.json
+          git commit -m "chore: update seen listings"
+          git push
+
