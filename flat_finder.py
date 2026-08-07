@@ -10,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 import yaml
@@ -98,17 +99,30 @@ def scrape_sreality(search: dict[str, Any]) -> list[dict[str, Any]]:
         browser = runner.chromium.launch(headless=True)
         context = browser.new_context(locale="cs-CZ", user_agent=UA)
         page = context.new_page()
-        page.goto(search["sreality_url"], wait_until="domcontentloaded", timeout=60000)
-        if "cmp.seznam.cz" in page.url:
-            dismiss_consent(page)
-        try:
-            page.wait_for_selector('a[href*="/detail/prodej/byt/"]', timeout=45000)
-        except PlaywrightTimeoutError:
-            save_diagnostics(page, search["id"])
-            raise
-        links = page.locator('a[href*="/detail/prodej/byt/"]').evaluate_all(
-            "els => [...new Set(els.map(e => e.href))].slice(0, 60)"
-        )
+        links: list[str] = []
+        for page_number in range(1, int(search.get("sreality_pages", 1)) + 1):
+            parts = urlsplit(search["sreality_url"])
+            query = dict(parse_qsl(parts.query))
+            if page_number > 1:
+                query["strana"] = str(page_number)
+            page_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+            page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
+            if "cmp.seznam.cz" in page.url:
+                dismiss_consent(page)
+            try:
+                page.wait_for_selector('a[href*="/detail/prodej/byt/"]', timeout=45000)
+            except PlaywrightTimeoutError:
+                save_diagnostics(page, f"{search['id']}-page-{page_number}")
+                if page_number == 1:
+                    raise
+                break
+            page_links = page.locator('a[href*="/detail/prodej/byt/"]').evaluate_all(
+                "els => [...new Set(els.map(e => e.href))]"
+            )
+            before = len(links)
+            links.extend(url for url in page_links if url not in links)
+            if len(links) == before:
+                break
         for url in links:
             detail_page = context.new_page()
             try:
