@@ -11,14 +11,15 @@ searches:
       - {name: "Letňany", lat: 50.1250, lon: 14.5169}
       - {name: "Zličín", lat: 50.0531, lon: 14.2907}
       - {name: "Opatov", lat: 50.0279, lon: 14.5086}
-    sreality_url: "https://www.sreality.cz/hledani/prodej/byty/stredocesky-kraj?cena-do=4500000"
+    sreality_url: "https://www.sreality.cz/hledani/prodej/byty/stredocesky-kraj?cena-do=4500000&vlastnictvi=osobni"
   - id: zabreh
     title: "Новые квартиры: Zábřeh и 5 км вокруг"
     max_price_czk: 4000000
     center: {lat: 49.8826, lon: 16.8722}
     max_radius_km: 5
-    # Отдельная выдача города — иначе Zábřeh теряется среди всего Olomoucký kraj.
-    sreality_url: "https://www.sreality.cz/hledani/prodej/byty/zabreh?cena-do=4000000"
+    # Sreality группирует Zábřeh в выдаче okres Šumperk; радиус ниже
+    # отбрасывает Šumperk, Mohelnice и остальные удалённые населённые пункты.
+    sreality_url: "https://www.sreality.cz/hledani/prodej/byty/sumperk?cena-do=4000000&vlastnictvi=osobni"
 
 filters:
   require_personal_ownership: true

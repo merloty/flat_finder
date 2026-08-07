@@ -116,6 +116,10 @@ def scrape_sreality(search: dict[str, Any]) -> list[dict[str, Any]]:
             except PlaywrightTimeoutError:
                 save_diagnostics(page, f"{search['id']}-page-{page_number}")
                 if page_number == 1:
+                    # A valid search page with no cards means zero results,
+                    # while the consent host means navigation really failed.
+                    if "sreality.cz" in page.url and "cmp.seznam.cz" not in page.url:
+                        return []
                     raise
                 break
             page_links = page.locator('a[href*="/detail/prodej/byt/"]').evaluate_all(
@@ -163,6 +167,9 @@ def parse_sreality_page(url: str, body: str) -> dict[str, Any] | None:
         "title": title_match.group(0).strip(), "location": location,
         "price": price, "lat": coords["lat"], "lon": coords["lon"],
         "text": body, "url": url,
+        # The upstream search URL itself is constrained by
+        # vlastnictvi=osobni, so this is stronger than wording in free text.
+        "ownership_verified": True,
     }
 
 
@@ -188,7 +195,8 @@ def matches(item: dict[str, Any], search: dict[str, Any]) -> bool:
     text = norm(item["title"] + " " + item["location"] + " " + item["text"])
     if any(norm(term) in text for term in cfg["excluded_terms"]):
         return False
-    if cfg["require_personal_ownership"] and not any(norm(term) in text for term in cfg["required_terms"]):
+    if (cfg["require_personal_ownership"] and not item.get("ownership_verified")
+            and not any(norm(term) in text for term in cfg["required_terms"])):
         return False
     origin = {"lat": item["lat"], "lon": item["lon"]}
     if "center" in search:
