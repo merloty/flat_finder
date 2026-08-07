@@ -148,8 +148,17 @@ def load_state() -> dict[str, Any]:
 
 def main() -> None:
     state = load_state()
+    failures: list[str] = []
     for search in CONFIG["searches"]:
-        items = scrape_sreality(search)
+        try:
+            items = scrape_sreality(search)
+        except requests.RequestException as exc:
+            # One unavailable portal must not prevent Telegram diagnostics or
+            # future adapters from running.
+            message = f"Sreality / {search['id']}: {type(exc).__name__}"
+            print(message, file=sys.stderr)
+            failures.append(message)
+            continue
         fresh = [x for x in items if x["key"] not in state["seen"]]
         if fresh:
             limit = CONFIG["max_results_per_message"]
@@ -158,10 +167,13 @@ def main() -> None:
                 telegram(f"<b>{html.escape(search['title'])}</b>\n\n{body}")
         for item in items:
             state["seen"][item["key"]] = hashlib.sha1(item["url"].encode()).hexdigest()[:12]
+    if failures:
+        telegram("⚠️ <b>Flat Finder запущен, но источник временно недоступен</b>\n\n" +
+                 "\n".join(html.escape(x) for x in failures) +
+                 "\n\nTelegram настроен правильно; адаптер источника требует обновления.")
     STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 CONFIG = yaml.safe_load((ROOT / "config.yml").read_text(encoding="utf-8"))
 if __name__ == "__main__":
     main()
-
