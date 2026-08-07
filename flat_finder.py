@@ -15,6 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 import requests
 import yaml
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).parent
@@ -173,6 +174,110 @@ def parse_sreality_page(url: str, body: str) -> dict[str, Any] | None:
     }
 
 
+def iter_json(value: Any):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from iter_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from iter_json(child)
+
+
+def parse_generic_page(page: Any, url: str, source_id: str, source_name: str) -> dict[str, Any] | None:
+    body = page.locator("body").inner_text(timeout=20000)
+    title = ""
+    location = ""
+    price = 0
+    coords: dict[str, float] | None = None
+    for raw in page.locator('script[type="application/ld+json"]').all_text_contents():
+        try:
+            data = json.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        for node in iter_json(data):
+            title = title or str(node.get("name") or "")
+            offers = node.get("offers") if isinstance(node.get("offers"), dict) else {}
+            raw_price = offers.get("price") or node.get("price")
+            if raw_price and not price:
+                digits = re.sub(r"\D", "", str(raw_price))
+                price = int(digits) if digits else 0
+            address = node.get("address")
+            if isinstance(address, dict):
+                location = location or ", ".join(str(address.get(k, "")) for k in
+                    ("streetAddress", "addressLocality", "postalCode") if address.get(k))
+            elif isinstance(address, str):
+                location = location or address
+            geo = node.get("geo")
+            if isinstance(geo, dict) and geo.get("latitude") and geo.get("longitude"):
+                coords = {"lat": float(geo["latitude"]), "lon": float(geo["longitude"])}
+    if not title:
+        headings = page.locator("h1").all_text_contents()
+        title = headings[0].strip() if headings else "Prodej bytu"
+    if not price:
+        match = re.search(r"([\d\s.]{3,})\s*Kč", body)
+        price = int(re.sub(r"\D", "", match.group(1))) if match else 0
+    if not location:
+        address_nodes = page.locator('address, [class*="address"], [class*="location"]').all_text_contents()
+        location = next((x.strip() for x in address_nodes if 3 < len(x.strip()) < 180), "")
+    if not location:
+        return None
+    coords = coords or geocode(location)
+    if not coords:
+        return None
+    stable = hashlib.sha1(urlsplit(url)._replace(query="", fragment="").geturl().encode()).hexdigest()[:20]
+    return {
+        "key": f"{source_id}:{stable}", "source": source_name,
+        "title": title, "location": location, "price": price,
+        "lat": coords["lat"], "lon": coords["lon"], "text": body, "url": url,
+    }
+
+
+def scrape_generic(search: dict[str, Any], source_id: str, cfg: dict[str, Any]) -> list[dict[str, Any]]:
+    start_url = search["source_urls"][source_id]
+    found: list[dict[str, Any]] = []
+    links: list[str] = []
+    with sync_playwright() as runner:
+        browser = runner.chromium.launch(headless=True)
+        context = browser.new_context(locale="cs-CZ", user_agent=UA)
+        page = context.new_page()
+        for page_number in range(1, 201):
+            parts = urlsplit(start_url)
+            query = dict(parse_qsl(parts.query))
+            if page_number > 1:
+                query[cfg["page_param"]] = str(page_number)
+            page_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+            page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
+            dismiss_consent(page)
+            selector = f'a[href*="{cfg["link_fragment"]}"]'
+            try:
+                page.wait_for_selector(selector, timeout=20000)
+            except PlaywrightTimeoutError:
+                save_diagnostics(page, f"{source_id}-{search['id']}-{page_number}")
+                if page_number == 1:
+                    raise
+                break
+            page_links = page.locator(selector).evaluate_all("els => [...new Set(els.map(e => e.href))]")
+            before = len(links)
+            links.extend(x for x in page_links if x not in links)
+            if len(links) == before:
+                break
+        for url in links:
+            detail = context.new_page()
+            try:
+                detail.goto(url, wait_until="domcontentloaded", timeout=45000)
+                dismiss_consent(detail)
+                item = parse_generic_page(detail, url, source_id, cfg["name"])
+                if item and matches(item, search):
+                    found.append(item)
+            except PlaywrightTimeoutError:
+                print(f"{source_id} detail timeout: {url}", file=sys.stderr)
+            finally:
+                detail.close()
+        browser.close()
+    return found
+
+
 def route_minutes(origin: dict[str, float], destinations: list[dict[str, Any]]) -> tuple[int, str] | None:
     best: tuple[int, str] | None = None
     for dest in destinations:
@@ -239,15 +344,20 @@ def main() -> None:
     state = load_state()
     failures: list[str] = []
     for search in CONFIG["searches"]:
+        items: list[dict[str, Any]] = []
         try:
-            items = scrape_sreality(search)
-        except (requests.RequestException, PlaywrightTimeoutError) as exc:
-            # One unavailable portal must not prevent Telegram diagnostics or
-            # future adapters from running.
+            items.extend(scrape_sreality(search))
+        except (requests.RequestException, PlaywrightError, RuntimeError) as exc:
             message = f"Sreality / {search['id']}: {type(exc).__name__}"
             print(message, file=sys.stderr)
             failures.append(message)
-            continue
+        for source_id, source_cfg in CONFIG["sources"].items():
+            try:
+                items.extend(scrape_generic(search, source_id, source_cfg))
+            except (requests.RequestException, PlaywrightError, RuntimeError) as exc:
+                message = f"{source_cfg['name']} / {search['id']}: {type(exc).__name__}"
+                print(message, file=sys.stderr)
+                failures.append(message)
         fresh = [x for x in items if x["key"] not in state["seen"]]
         if fresh:
             limit = CONFIG["max_results_per_message"]
