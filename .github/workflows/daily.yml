@@ -28,6 +28,14 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: python flat_finder.py
+      - name: Upload scraper diagnostics
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: scraper-diagnostics
+          path: diagnostics/
+          if-no-files-found: ignore
+          retention-days: 3
       - name: Persist sent listing IDs
         run: |
           if git diff --quiet -- state.json; then exit 0; fi

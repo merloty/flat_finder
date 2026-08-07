@@ -18,6 +18,7 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).parent
 STATE_PATH = ROOT / "state.json"
+DIAGNOSTICS = ROOT / "diagnostics"
 UA = "flat-finder/1.0 (+https://github.com/merloty/flat_finder)"
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": UA, "Accept": "application/json"})
@@ -61,15 +62,33 @@ def geocode(location: str) -> dict[str, float] | None:
 
 
 def dismiss_consent(page: Any) -> None:
-    for label in ("Odmítnout vše", "Nesouhlasím", "Pokračovat bez souhlasu", "Reject all"):
-        try:
-            button = page.get_by_role("button", name=label, exact=False)
-            if button.count():
-                button.first.click(timeout=3000)
-                page.wait_for_load_state("domcontentloaded", timeout=15000)
-                return
-        except PlaywrightTimeoutError:
-            continue
+    labels = (
+        "Odmítnout vše", "Nesouhlasím", "Pokračovat bez souhlasu",
+        "Souhlasím", "Přijmout vše", "Reject all", "Accept all",
+    )
+    page.wait_for_timeout(2500)
+    for frame in page.frames:
+        for label in labels:
+            try:
+                candidate = frame.get_by_text(label, exact=False)
+                if candidate.count() and candidate.first.is_visible():
+                    candidate.first.click(timeout=5000, force=True)
+                    page.wait_for_timeout(2500)
+                    return
+            except PlaywrightTimeoutError:
+                continue
+
+
+def save_diagnostics(page: Any, search_id: str) -> None:
+    DIAGNOSTICS.mkdir(exist_ok=True)
+    try:
+        page.screenshot(path=str(DIAGNOSTICS / f"{search_id}.png"), full_page=True)
+        (DIAGNOSTICS / f"{search_id}.html").write_text(page.content(), encoding="utf-8")
+        (DIAGNOSTICS / f"{search_id}.txt").write_text(
+            f"URL: {page.url}\nTITLE: {page.title()}\n", encoding="utf-8"
+        )
+    except Exception as exc:
+        print(f"Cannot save diagnostics: {exc}", file=sys.stderr)
 
 
 def scrape_sreality(search: dict[str, Any]) -> list[dict[str, Any]]:
@@ -82,7 +101,11 @@ def scrape_sreality(search: dict[str, Any]) -> list[dict[str, Any]]:
         page.goto(search["sreality_url"], wait_until="domcontentloaded", timeout=60000)
         if "cmp.seznam.cz" in page.url:
             dismiss_consent(page)
-        page.wait_for_selector('a[href*="/detail/prodej/byt/"]', timeout=45000)
+        try:
+            page.wait_for_selector('a[href*="/detail/prodej/byt/"]', timeout=45000)
+        except PlaywrightTimeoutError:
+            save_diagnostics(page, search["id"])
+            raise
         links = page.locator('a[href*="/detail/prodej/byt/"]').evaluate_all(
             "els => [...new Set(els.map(e => e.href))].slice(0, 60)"
         )
