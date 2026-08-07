@@ -13,10 +13,11 @@ from typing import Any
 
 import requests
 import yaml
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).parent
 STATE_PATH = ROOT / "state.json"
-API = "https://www.sreality.cz/api/cs/v2"
 UA = "flat-finder/1.0 (+https://github.com/merloty/flat_finder)"
 SESSION = requests.Session()
 SESSION.headers.update({"User-Agent": UA, "Accept": "application/json"})
@@ -42,46 +43,85 @@ def get_json(url: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
     return response.json()
 
 
+def geocode(location: str) -> dict[str, float] | None:
+    """Resolve a Czech locality through the public OSM geocoder."""
+    try:
+        response = SESSION.get(
+            "https://nominatim.openstreetmap.org/search",
+            params={"q": f"{location}, Česko", "format": "jsonv2", "limit": 1, "countrycodes": "cz"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        rows = response.json()
+        if rows:
+            return {"lat": float(rows[0]["lat"]), "lon": float(rows[0]["lon"])}
+    except (requests.RequestException, ValueError, KeyError):
+        pass
+    return None
+
+
+def dismiss_consent(page: Any) -> None:
+    for label in ("Odmítnout vše", "Nesouhlasím", "Pokračovat bez souhlasu", "Reject all"):
+        try:
+            button = page.get_by_role("button", name=label, exact=False)
+            if button.count():
+                button.first.click(timeout=3000)
+                page.wait_for_load_state("domcontentloaded", timeout=15000)
+                return
+        except PlaywrightTimeoutError:
+            continue
+
+
 def scrape_sreality(search: dict[str, Any]) -> list[dict[str, Any]]:
+    """Scrape the public search UI; Sreality retired its former JSON endpoint."""
     found: list[dict[str, Any]] = []
-    for region in search["sreality_region_ids"]:
-        params = {
-            "category_main_cb": 1, "category_type_cb": 1,
-            "locality_region_id": region, "price_to": search["max_price_czk"],
-            "per_page": 100, "page": 1,
-        }
-        payload = get_json(f"{API}/estates", params)
-        for raw in payload.get("_embedded", {}).get("estates", []):
-            estate_id = str(raw.get("hash_id") or raw.get("id"))
-            if not estate_id or estate_id == "None":
-                continue
+    with sync_playwright() as runner:
+        browser = runner.chromium.launch(headless=True)
+        context = browser.new_context(locale="cs-CZ", user_agent=UA)
+        page = context.new_page()
+        page.goto(search["sreality_url"], wait_until="domcontentloaded", timeout=60000)
+        if "cmp.seznam.cz" in page.url:
+            dismiss_consent(page)
+        page.wait_for_selector('a[href*="/detail/prodej/byt/"]', timeout=45000)
+        links = page.locator('a[href*="/detail/prodej/byt/"]').evaluate_all(
+            "els => [...new Set(els.map(e => e.href))].slice(0, 60)"
+        )
+        for url in links:
+            detail_page = context.new_page()
             try:
-                detail = get_json(f"{API}/estates/{estate_id}")
-            except requests.RequestException as exc:
-                print(f"detail {estate_id}: {exc}", file=sys.stderr)
-                continue
-            item = parse_sreality(estate_id, raw, detail)
-            if item and matches(item, search):
-                found.append(item)
-            time.sleep(0.08)
+                detail_page.goto(url, wait_until="domcontentloaded", timeout=45000)
+                if "cmp.seznam.cz" in detail_page.url:
+                    dismiss_consent(detail_page)
+                body = detail_page.locator("body").inner_text(timeout=20000)
+                item = parse_sreality_page(url, body)
+                if item and matches(item, search):
+                    found.append(item)
+            except PlaywrightTimeoutError as exc:
+                print(f"detail timeout {url}: {exc}", file=sys.stderr)
+            finally:
+                detail_page.close()
+        browser.close()
     return found
 
 
-def parse_sreality(estate_id: str, raw: dict[str, Any], detail: dict[str, Any]) -> dict[str, Any] | None:
-    gps = detail.get("map", {}).get("gps") or raw.get("gps") or {}
-    lat, lon = gps.get("lat"), gps.get("lon")
-    if lat is None or lon is None:
+def parse_sreality_page(url: str, body: str) -> dict[str, Any] | None:
+    estate_match = re.search(r"/(\d+)(?:[/?#]|$)", url)
+    price_match = re.search(r"([\d\s.]+)\s*Kč", body)
+    title_match = re.search(r"Prodej bytu[^\n]*", body, re.IGNORECASE)
+    location_match = re.search(r"(?:Prodej bytu[^\n]*\n)([^\n]+)", body, re.IGNORECASE)
+    if not estate_match or not price_match or not title_match or not location_match:
         return None
-    text_parts = [str(detail.get("text", {}).get("value", ""))]
-    for group in detail.get("items", []):
-        text_parts.extend(f"{x.get('name', '')}: {x.get('value', '')}" for x in group.get("items", []))
-    price = detail.get("price_czk", {}).get("value_raw") or raw.get("price_czk", {}).get("value_raw") or 0
+    location = location_match.group(1).strip()
+    coords = geocode(location)
+    if not coords:
+        return None
+    price = int(re.sub(r"\D", "", price_match.group(1)))
+    estate_id = estate_match.group(1)
     return {
         "key": f"sreality:{estate_id}", "source": "Sreality",
-        "title": raw.get("name", "Byt"), "location": raw.get("locality", ""),
-        "price": int(price or 0), "lat": float(lat), "lon": float(lon),
-        "text": " ".join(text_parts),
-        "url": f"https://www.sreality.cz/detail/prodej/byt/_/_/{estate_id}",
+        "title": title_match.group(0).strip(), "location": location,
+        "price": price, "lat": coords["lat"], "lon": coords["lon"],
+        "text": body, "url": url,
     }
 
 
@@ -152,7 +192,7 @@ def main() -> None:
     for search in CONFIG["searches"]:
         try:
             items = scrape_sreality(search)
-        except requests.RequestException as exc:
+        except (requests.RequestException, PlaywrightTimeoutError) as exc:
             # One unavailable portal must not prevent Telegram diagnostics or
             # future adapters from running.
             message = f"Sreality / {search['id']}: {type(exc).__name__}"
