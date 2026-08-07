@@ -100,7 +100,9 @@ def scrape_sreality(search: dict[str, Any]) -> list[dict[str, Any]]:
         context = browser.new_context(locale="cs-CZ", user_agent=UA)
         page = context.new_page()
         links: list[str] = []
-        for page_number in range(1, int(search.get("sreality_pages", 1)) + 1):
+        # Walk the entire result set. Repeated URLs mark the last page because
+        # Sreality may redirect an out-of-range page to the final valid one.
+        for page_number in range(1, 201):
             parts = urlsplit(search["sreality_url"])
             query = dict(parse_qsl(parts.query))
             if page_number > 1:
@@ -123,6 +125,8 @@ def scrape_sreality(search: dict[str, Any]) -> list[dict[str, Any]]:
             links.extend(url for url in page_links if url not in links)
             if len(links) == before:
                 break
+        else:
+            raise RuntimeError("Sreality pagination did not terminate after 200 pages")
         for url in links:
             detail_page = context.new_page()
             try:
