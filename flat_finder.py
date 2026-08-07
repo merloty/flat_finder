@@ -244,14 +244,21 @@ def scrape_generic(search: dict[str, Any], source_id: str, cfg: dict[str, Any]) 
         for page_number in range(1, 201):
             parts = urlsplit(start_url)
             query = dict(parse_qsl(parts.query))
-            if page_number > 1:
+            path = parts.path
+            if page_number > 1 and cfg.get("page_mode") == "offset_path":
+                path = parts.path.rstrip("/") + f"/{(page_number - 1) * 20}/"
+            elif page_number > 1:
                 query[cfg["page_param"]] = str(page_number)
-            page_url = urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+            page_url = urlunsplit((parts.scheme, parts.netloc, path, urlencode(query), parts.fragment))
             page.goto(page_url, wait_until="domcontentloaded", timeout=60000)
-            dismiss_consent(page)
+            title = page.title().lower()
+            if "404" in title or "error occurred" in page.locator("body").inner_text(timeout=10000).lower():
+                raise RuntimeError(f"source returned an error page: {page.url}")
             selector = f'a[href*="{cfg["link_fragment"]}"]'
             try:
-                page.wait_for_selector(selector, timeout=20000)
+                # Cookie overlays do not matter: listing anchors are already
+                # present in the DOM on Bazoš and Bezrealitky.
+                page.wait_for_selector(selector, state="attached", timeout=20000)
             except PlaywrightTimeoutError:
                 save_diagnostics(page, f"{source_id}-{search['id']}-{page_number}")
                 if page_number == 1:
@@ -266,7 +273,6 @@ def scrape_generic(search: dict[str, Any], source_id: str, cfg: dict[str, Any]) 
             detail = context.new_page()
             try:
                 detail.goto(url, wait_until="domcontentloaded", timeout=45000)
-                dismiss_consent(detail)
                 item = parse_generic_page(detail, url, source_id, cfg["name"])
                 if item and matches(item, search):
                     found.append(item)
@@ -348,14 +354,14 @@ def main() -> None:
         try:
             items.extend(scrape_sreality(search))
         except (requests.RequestException, PlaywrightError, RuntimeError) as exc:
-            message = f"Sreality / {search['id']}: {type(exc).__name__}"
+            message = f"Sreality / {search['id']}: {type(exc).__name__}: {str(exc)[:140]}"
             print(message, file=sys.stderr)
             failures.append(message)
         for source_id, source_cfg in CONFIG["sources"].items():
             try:
                 items.extend(scrape_generic(search, source_id, source_cfg))
             except (requests.RequestException, PlaywrightError, RuntimeError) as exc:
-                message = f"{source_cfg['name']} / {search['id']}: {type(exc).__name__}"
+                message = f"{source_cfg['name']} / {search['id']}: {type(exc).__name__}: {str(exc)[:140]}"
                 print(message, file=sys.stderr)
                 failures.append(message)
         fresh = [x for x in items if x["key"] not in state["seen"]]

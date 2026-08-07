@@ -17,7 +17,7 @@ searches:
       bezrealitky: "https://www.bezrealitky.cz/vypis/nabidka-prodej/byt/stredocesky-kraj"
       reality_idnes: "https://reality.idnes.cz/s/prodej/byty/stredocesky-kraj/"
       remax: "https://www.remax-czech.cz/reality/vyhledavani/?regions=St%C5%99edo%C4%8Desk%C3%BD+kraj&offer=prodej&type=byt"
-      maxi_reality: "https://www.maxirealitypraha.cz/nemovitosti/?typ=byt&nabidka=prodej"
+      maxi_reality: "https://www.maxirealitypraha.cz/prodej/byty/"
       bazos: "https://reality.bazos.cz/prodam/byt/?hlokalita=11000&humkreis=60&cenado=4500000"
   - id: zabreh
     title: "Новые квартиры: Zábřeh и 5 км вокруг"
@@ -32,7 +32,7 @@ searches:
       bezrealitky: "https://www.bezrealitky.cz/vypis/nabidka-prodej/byt/olomoucky-kraj"
       reality_idnes: "https://reality.idnes.cz/s/prodej/byty/olomoucky-kraj/okres-sumperk/"
       remax: "https://www.remax-czech.cz/reality/vyhledavani/?query=Z%C3%A1b%C5%99eh&offer=prodej&type=byt"
-      maxi_reality: "https://www.maxirealitypraha.cz/nemovitosti/?typ=byt&nabidka=prodej"
+      maxi_reality: "https://www.maxirealitypraha.cz/prodej/byty/"
       bazos: "https://reality.bazos.cz/prodam/byt/?hlokalita=78901&humkreis=5&cenado=4000000"
 
 sources:
@@ -40,8 +40,8 @@ sources:
   bezrealitky: {name: "Bezrealitky", link_fragment: "/nemovitosti-byty-domy/", page_param: "page"}
   reality_idnes: {name: "Reality.iDNES", link_fragment: "/detail/", page_param: "page"}
   remax: {name: "RE/MAX Czech", link_fragment: "/reality/detail/", page_param: "page"}
-  maxi_reality: {name: "Maxi Reality Praha", link_fragment: "/nemovitost/", page_param: "page"}
-  bazos: {name: "Bazoš", link_fragment: "/inzerat/", page_param: "strana"}
+  maxi_reality: {name: "Maxi Reality Praha", link_fragment: "/prodej/byty/", page_param: "page"}
+  bazos: {name: "Bazoš", link_fragment: "/inzerat/", page_param: "strana", page_mode: "offset_path"}
 
 filters:
   require_personal_ownership: true
